@@ -1,8 +1,8 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
-import { join } from 'path'
+import { app, shell, BrowserWindow, ipcMain, session } from 'electron'
+import path, { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { channels } from '@/shared/constants'
+import { channels, APP_PROTOCOL, PRODUCTION_CALLBACK_URL } from '@/shared/constants'
 
 function createWindow(): void {
   // Create the browser window.
@@ -125,4 +125,206 @@ ipcMain.handle(channels.HTTP_REQUEST, async (_event, options) => {
       error: error instanceof Error ? error.message : String(error)
     }
   }
+})
+
+// OAuth popup code
+const defaultOAuthRedirectUrl = (() => {
+  if (!is.dev) {
+    return PRODUCTION_CALLBACK_URL
+  }
+
+  const base = import.meta.env.VITE_DOMAIN?.trim()
+  if (!base) return null
+  const normalizedBase = base.replace(/\/+$/, '')
+  return `${normalizedBase}/sso-callback`
+})()
+
+type AuthOpenPayload =
+  | string
+  | {
+      url?: string
+      callbackUrl?: string | null
+    }
+
+const safeParseUrl = (value?: string | null): URL | null => {
+  if (!value) return null
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
+const hasOAuthCallbackParams = (targetUrl: string): boolean => {
+  const parsed = safeParseUrl(targetUrl)
+  if (!parsed) return false
+  const params = parsed.searchParams
+  return params.has('rotating_token_nonce') || params.has('created_session_id')
+}
+
+const normalizeCallbackUrl = (value?: string | null): string | null => {
+  if (!value) return null
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : null
+}
+
+const createOAuthCallbackMatcher = (callbackUrlOverride?: string | null) => {
+  const normalizedCallbackUrl =
+    normalizeCallbackUrl(callbackUrlOverride) ?? normalizeCallbackUrl(defaultOAuthRedirectUrl)
+  const callbackUrlObject = safeParseUrl(normalizedCallbackUrl)
+  const callbackUrlLower = normalizedCallbackUrl?.toLowerCase() ?? null
+
+  return (targetUrl: string): boolean => {
+    if (!targetUrl) return false
+
+    if (callbackUrlObject) {
+      const target = safeParseUrl(targetUrl)
+      if (target) {
+        const callbackOrigin = callbackUrlObject.origin
+        const callbackPath = callbackUrlObject.pathname
+        const targetOrigin = target.origin
+        const targetPath = target.pathname
+
+        if (
+          callbackOrigin !== 'null' &&
+          targetOrigin === callbackOrigin &&
+          targetPath === callbackPath
+        ) {
+          return true
+        }
+
+        if (callbackOrigin === 'null' && target.protocol === callbackUrlObject.protocol) {
+          return target.href.startsWith(callbackUrlObject.href)
+        }
+      }
+    }
+
+    if (callbackUrlLower && targetUrl.toLowerCase().startsWith(callbackUrlLower)) {
+      return true
+    }
+
+    return hasOAuthCallbackParams(targetUrl)
+  }
+}
+
+let authPopupWindow: BrowserWindow | null = null
+
+const closeAuthPopupWindow = (): void => {
+  if (authPopupWindow && !authPopupWindow.isDestroyed()) {
+    authPopupWindow.close()
+  }
+  authPopupWindow = null
+}
+
+const registerAppProtocol = (): void => {
+  if (is.dev) {
+    return
+  }
+
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(APP_PROTOCOL, process.execPath, [
+        path.resolve(process.argv[1])
+      ])
+    }
+  } else {
+    app.setAsDefaultProtocolClient(APP_PROTOCOL)
+  }
+}
+
+registerAppProtocol()
+
+ipcMain.on(channels.AUTH_OPENED_POPUP, (event, payload: AuthOpenPayload) => {
+  const normalizedPayload =
+    typeof payload === 'string'
+      ? { url: payload, callbackUrl: undefined }
+      : { url: payload?.url ?? '', callbackUrl: payload?.callbackUrl }
+
+  if (!normalizedPayload.url) {
+    console.warn('[main] auth:open invoked without a URL')
+    return
+  }
+
+  closeAuthPopupWindow()
+
+  const openerContents = event.sender
+  const parentWindow =
+    BrowserWindow.fromWebContents(openerContents) ?? BrowserWindow.getFocusedWindow()
+
+  const authWindow = new BrowserWindow({
+    width: 600,
+    height: 800,
+    autoHideMenuBar: true,
+    show: false,
+    parent: parentWindow ?? undefined,
+    webPreferences: {
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      nativeWindowOpen: true,
+      session: parentWindow?.webContents.session ?? session.defaultSession
+    }
+  })
+
+  authPopupWindow = authWindow
+  authWindow.setMenuBarVisibility(false)
+
+  const matchCallbackUrl = createOAuthCallbackMatcher(normalizedPayload.callbackUrl)
+  let hasEmittedCallback = false
+
+  const emitCallback = (callbackLocation: string): void => {
+    if (hasEmittedCallback) return
+    hasEmittedCallback = true
+
+    if (!openerContents.isDestroyed()) {
+      openerContents.send(channels.AUTH_CALLBACK, callbackLocation)
+    }
+  }
+
+  const maybeHandleCallback = (nextUrl?: string | null, preventDefault?: () => void): void => {
+    if (!nextUrl) return
+    if (!matchCallbackUrl(nextUrl)) return
+
+    if (preventDefault) {
+      preventDefault()
+    }
+
+    emitCallback(nextUrl)
+
+    if (!authWindow.isDestroyed()) {
+      authWindow.close()
+    }
+  }
+
+  authWindow.webContents.on('will-redirect', (navigationEvent, url) => {
+    maybeHandleCallback(url, () => navigationEvent.preventDefault())
+  })
+
+  authWindow.webContents.on('will-navigate', (navigationEvent, url) => {
+    maybeHandleCallback(url, () => navigationEvent.preventDefault())
+  })
+
+  authWindow.webContents.on('did-navigate', (_event, url) => {
+    maybeHandleCallback(url)
+  })
+
+  authWindow.on('closed', () => {
+    if (!openerContents.isDestroyed()) {
+      openerContents.send(channels.AUTH_CLOSED_POPUP)
+    }
+
+    if (authPopupWindow === authWindow) {
+      authPopupWindow = null
+    }
+  })
+
+  authWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
+  authWindow.loadURL(normalizedPayload.url).catch((error) => {
+    console.error('[main] Failed to open auth popup', normalizedPayload.url, error)
+  })
+
+  authWindow.once('ready-to-show', () => {
+    authWindow.show()
+  })
 })

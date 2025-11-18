@@ -37,15 +37,17 @@ const RootLayout = () => {
           })
         }}
       >
-        <div className="flex gap-2 p-2">
-          <Link to="/" className="[&.active]:font-bold">
-            Home
-          </Link>{' '}
-          <Link to="/about" className="[&.active]:font-bold">
-            About
-          </Link>
-        </div>
-        <hr />
+        <header className="bg-background absolute top-0 left-0 h-10 w-full border-b border-b-neutral-200 px-4 dark:border-b-neutral-700">
+          <div className="flex h-full flex-row items-center gap-4">
+            <Link to="/" className="[&.active]:font-bold">
+              Home
+            </Link>{' '}
+            <Link to="/about" className="[&.active]:font-bold">
+              About
+            </Link>
+          </div>
+        </header>
+
         <Outlet />
         {/* <TanStackRouterDevtools /> */}
         <footer className="absolute bottom-0 left-0 h-5 w-full border-t border-t-neutral-200 px-4 dark:border-t-neutral-700">
