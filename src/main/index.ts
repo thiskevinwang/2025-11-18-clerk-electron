@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { channels } from '@/shared/constants'
 
 function createWindow(): void {
   // Create the browser window.
@@ -49,9 +50,6 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
-
   createWindow()
 
   app.on('activate', function () {
@@ -72,3 +70,59 @@ app.on('window-all-closed', () => {
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
+
+import __Store from 'electron-store'
+/**
+ * Vite workaround for "Store is not a constructor"
+ * https://github.com/sindresorhus/electron-store/issues/289#issuecomment-2899942966
+ */
+type ElectronStoreConstructor = typeof __Store
+
+const electronStoreModule = __Store as ElectronStoreConstructor & {
+  default?: ElectronStoreConstructor
+}
+
+const Store = electronStoreModule.default ?? electronStoreModule
+
+const store = new Store()
+// Main process IPC Handlers
+ipcMain.on(channels.AUTH_TOKEN_SET, (_event, key, token) => {
+  store.set(key, token)
+})
+
+ipcMain.handle(channels.AUTH_TOKEN_GET, async (_event, key) => {
+  return store.get(key)
+})
+
+ipcMain.on(channels.AUTH_TOKEN_CLEAR, (_event, key) => {
+  store.delete(key)
+})
+
+// HTTP proxy handler - forwards HTTP requests from renderer to main process
+ipcMain.handle(channels.HTTP_REQUEST, async (_event, options) => {
+  const { url, method = 'GET', headers = {}, body } = options
+
+  try {
+    const res = await fetch(url, { method, headers, body })
+    const text = await res.text()
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      headers: Object.fromEntries(res.headers.entries()),
+      body: text
+    }
+  } catch (error) {
+    console.error('[main] http:request error', url, error)
+    // Return error information in a structured way
+    return {
+      ok: false,
+      status: 0,
+      statusText: error instanceof Error ? error.message : 'Unknown error',
+      headers: {},
+      body: '',
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+})
