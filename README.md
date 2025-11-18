@@ -1,34 +1,12 @@
-# clerk-electron
+This is an example project of myself exploring integrating Clerk in an Electron app.
 
-An Electron application with React and TypeScript
+The high-level approach consists of:
 
-## Recommended IDE Setup
+- Enable the native API for Clerk
+- Make Clerk behave like the `@clerk/clerk-expo` SDK
+  - "proxy" requests to Clerk through the electron "main" process (using IPC)
+    so that the app behaves like a mobile app.
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
-
-## Project Setup
-
-### Install
-
-```bash
-$ npm install
-```
-
-### Development
-
-```bash
-$ npm run dev
-```
-
-### Build
-
-```bash
-# For windows
-$ npm run build:win
-
-# For macOS
-$ npm run build:mac
-
-# For Linux
-$ npm run build:linux
-```
+Other notes:
+- use Tailwind, for web-like styling
+- use file-system based routing so the project can scale
