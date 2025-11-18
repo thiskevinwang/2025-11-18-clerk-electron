@@ -10,3 +10,5 @@ The high-level approach consists of:
 Other notes:
 - use Tailwind, for web-like styling
 - use file-system based routing so the project can scale
+
+![Image](./docs//image.png)
