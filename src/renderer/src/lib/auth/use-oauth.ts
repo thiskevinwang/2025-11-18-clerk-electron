@@ -4,6 +4,7 @@ import { useClerk, useSignIn, useSignUp } from '@clerk/clerk-react'
 import type { OAuthStrategy } from '@clerk/types'
 
 import { PRODUCTION_CALLBACK_URL, channels } from '@/shared/constants'
+import { isClerkAPIResponseError } from '@clerk/clerk-js'
 
 export type UseOAuthFlowParams = {
   strategy: OAuthStrategy
@@ -79,6 +80,7 @@ export const useOAuth = (
 
     setIsPopupOpen(true)
 
+    // Listen for popup closed event to stop tracking
     registerPopupCleanup(
       window.electron.ipcRenderer.on(channels.AUTH_CLOSED_POPUP, () => {
         stopTrackingPopup()
@@ -101,21 +103,31 @@ export const useOAuth = (
         externalVerificationRedirectURL?.searchParams.set('prompt', 'consent')
       }
 
+      // Notify main process to open the auth popup window
       window.electron.ipcRenderer.send(channels.AUTH_OPENED_POPUP, {
         url: externalVerificationRedirectURL?.toString() || '',
         callbackUrl: oauthRedirectUrl
       })
     } catch (error) {
       stopTrackingPopup()
+      if (isClerkAPIResponseError(error)) {
+        // console.error('clerk_error', error.code, error.message, error.longMessage, error.errors)
+        if (error.errors?.[0].code === 'session_exists') {
+          window.location.reload()
+          return
+        }
+      }
       throw error
     }
 
+    // Listen for auth callback from the popup
     const authCallbackOff = window.electron.ipcRenderer.on(
       channels.AUTH_CALLBACK,
       async (_event, ssoUrl: string) => {
         stopTrackingPopup()
 
         const url = new URL(ssoUrl)
+        console.log('[useOAuth] Received SSO callback URL:', ssoUrl)
 
         const params = url.searchParams
 
@@ -136,7 +148,7 @@ export const useOAuth = (
         }
 
         if (createdSessionId) {
-          setActive({ session: createdSessionId })
+          await setActive({ session: createdSessionId })
         } else {
           // Use signIn or signUp for next steps such as MFA
         }
