@@ -1,34 +1,34 @@
-import path from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import tsConfigPaths from 'vite-tsconfig-paths'
 
 export default defineConfig({
   main: {
-    resolve: {
-      alias: {
-        '@/shared': path.resolve(__dirname, './src/shared')
-      }
-    },
-    plugins: [externalizeDepsPlugin()]
+    plugins: [
+      tsConfigPaths({
+        root: __dirname,
+        projects: ['./tsconfig.node.json']
+      }),
+      externalizeDepsPlugin()
+    ]
   },
   preload: {
-    resolve: {
-      alias: {
-        '@/shared': path.resolve(__dirname, './src/shared')
-      }
-    },
-    plugins: [externalizeDepsPlugin()]
+    plugins: [
+      tsConfigPaths({
+        root: __dirname,
+        projects: ['./tsconfig.node.json']
+      }),
+      externalizeDepsPlugin()
+    ]
   },
   renderer: {
-    resolve: {
-      alias: {
-        '@/shared': path.resolve(__dirname, './src/shared'),
-        '@/renderer': path.resolve(__dirname, './src/renderer/src')
-      }
-    },
     plugins: [
+      tsConfigPaths({
+        root: __dirname,
+        projects: ['./tsconfig.web.json']
+      }),
       tanstackRouter({
         target: 'react',
         autoCodeSplitting: true
